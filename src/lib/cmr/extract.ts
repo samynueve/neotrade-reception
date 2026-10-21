@@ -40,7 +40,13 @@ export async function extractDocuments(images: DocumentImage[], locale: Locale =
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new ExtractionError("not_configured");
   }
-  client ??= new Anthropic({ timeout: 55_000, maxRetries: 0 });
+  // Clé non rattachée à un espace de travail (sk-ant-usr-…) : l'API exige l'identifiant de l'espace (wrkspc_…)
+  const workspaceId = process.env.ANTHROPIC_WORKSPACE_ID;
+  client ??= new Anthropic({
+    timeout: 55_000,
+    maxRetries: 0,
+    defaultHeaders: workspaceId ? { "anthropic-workspace-id": workspaceId } : undefined,
+  });
 
   const content: Anthropic.Beta.BetaContentBlockParam[] = images.flatMap((img, i) => [
     { type: "text" as const, text: `Photo ${i + 1} :` },
