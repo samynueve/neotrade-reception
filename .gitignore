@@ -1,0 +1,23 @@
+node_modules/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+
+# Base SQLite locale
+prisma/*.db
+prisma/*.db-journal
+
+# Variables d'environnement (seul .env.example est versionné)
+.env
+.env.local
+.env*.local
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+
+.DS_Store
+uploads/

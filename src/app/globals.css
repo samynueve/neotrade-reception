@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+/*
+ * Réception à quai — couleurs NEOTRADE (neotradegroup.com) : indigo profond et vert.
+ * Contraste renforcé pour la lecture en plein jour ; texte foncé sur le vert (le blanc y serait illisible au soleil).
+ * Cibles tactiles d'au moins 56 px (utilisables avec des gants).
+ */
+@theme {
+  --color-brand-green: #68dc8f;
+  --color-brand-green-press: #52c97a;
+  --color-brand-green-deep: #4b7f5c; /* ombre des boutons, texte vert sur fond clair */
+  --color-brand-green-text: #2f6b45;
+  --color-brand-indigo: #24234b;
+  --color-brand-indigo-light: #34336a;
+  --color-brand-ink: #131327;
+  --color-brand-ground: #f2f2f7;
+  --color-ok: #1f7a43;
+  --color-alert: #b3261e;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    font-size: 18px; /* base plus grande que la normale */
+  }
+  body {
+    @apply bg-brand-ground font-sans text-brand-ink antialiased;
+    overscroll-behavior-y: contain;
+    overflow-x: clip;
+  }
+  :focus-visible {
+    @apply outline-4 outline-offset-2 outline-brand-green;
+  }
+  /* Codes, n° d'envoi, plaques : toujours lus de gauche à droite, même en arabe */
+  .font-mono {
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+  /* L'indication d'un champ de code reste dans la police normale (lisible en arabe) */
+  .font-mono::placeholder {
+    font-family: var(--font-sans);
+    letter-spacing: normal;
+  }
+  [lang="ar"] body {
+    line-height: 1.6;
+  }
+}
+
+@utility btn {
+  @apply inline-flex min-h-14 select-none items-center justify-center gap-3 rounded-2xl border-2 px-5 py-3 text-lg font-bold transition active:translate-y-[3px] disabled:pointer-events-none disabled:opacity-50;
+}
+/* Bouton principal façon site NEOTRADE : vert avec ombre portée verte */
+@utility btn-primary {
+  @apply btn border-transparent bg-brand-green text-brand-ink shadow-[0_5px_0_var(--color-brand-green-deep)] active:bg-brand-green-press active:shadow-[0_2px_0_var(--color-brand-green-deep)];
+}
+@utility btn-secondary {
+  @apply btn border-transparent bg-brand-indigo text-white shadow-[0_5px_0_var(--color-brand-ink)] active:bg-brand-indigo-light active:shadow-[0_2px_0_var(--color-brand-ink)];
+}
+@utility btn-outline {
+  @apply btn border-brand-indigo bg-white text-brand-ink active:bg-brand-ground;
+}
+@utility card {
+  @apply rounded-2xl border-2 border-brand-indigo/25 bg-white shadow-sm;
+}

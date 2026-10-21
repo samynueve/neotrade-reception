@@ -1,0 +1,329 @@
+// Schéma de données — Réception à quai NEOTRADE / SAS KASMI (Douvrin)
+// Contrôle des camions Kuehne+Nagel (agence Hauneck, relation X085).
+// Base PostgreSQL (dev et prod). DIRECT_URL sert aux migrations (Supabase : connexion directe, port 5432).
+//
+// Conventions (comme le site B2B) : modèles et champs en anglais, valeurs d'énumérations en français,
+// montants en centimes d'euro (entiers), poids en kg (décimal, 2 chiffres).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------- Énumérations ----------
+
+enum Role {
+  CARISTE
+  RESPONSABLE
+}
+
+enum ReceptionStatus {
+  BROUILLON // saisie des documents en cours
+  EN_CONTROLE // déchargement / scan en cours
+  CLOTUREE // rapport figé
+}
+
+enum PositionStatus {
+  ATTENDU
+  RECU
+  PARTIEL
+  MANQUANT
+  HORS_ADRESSE // adressée ailleurs (ex. Loos-en-Gohelle) : signalée, jamais comptée comme livrée à Douvrin
+}
+
+enum ScanMatch {
+  N_ENVOI // le code lu correspond au n° d'envoi (Sendungsnummer)
+  N_IMPRIME // le code lu correspond au n° imprimé (Zeichen + Nr)
+  MANUEL // rattaché à la main par l'utilisateur
+  INCONNU // aucune position trouvée dans ce camion
+}
+
+enum PackageCondition {
+  OK
+  ENDOMMAGE
+}
+
+enum DamageType {
+  CARTON_ECRASE
+  CARTON_OUVERT
+  CARTON_MOUILLE
+  FILM_DECHIRE
+  PALETTE_CASSEE
+  CONTENU_VISIBLE_ABIME
+  AUTRE
+}
+
+enum DisputeType {
+  MANQUANT
+  AVARIE
+  HORS_ADRESSE
+  ECART_PLOMB
+}
+
+enum DisputeStatus {
+  OUVERT
+  RETROUVE // arrivé dans un camion suivant (souvent sous un nouveau n° d'envoi)
+  CLOS_PERTE // déclaré perdu / réclamation faite
+  ANNULE
+}
+
+enum PhotoKind {
+  CAMION
+  PLOMB
+  CMR_LADELISTE
+  FAHRAUFTRAG
+  COLIS
+  DOMMAGE
+  NOTE_MANUSCRITE
+  AUTRE
+}
+
+enum NoteKind {
+  MANUSCRITE // note écrite à la main sur un document (ex. « 25 Missing Box »)
+  OBSERVATION // remarque du contrôleur
+}
+
+// ---------- Utilisateurs ----------
+
+model User {
+  id                String    @id @default(cuid())
+  name              String    @unique // nom affiché sur l'écran de connexion
+  pinHash           String // code PIN haché (bcrypt), jamais stocké en clair
+  role              Role      @default(CARISTE)
+  locale            String? // langue choisie (fr, en, de, ar) ; appliquée à chaque connexion
+  active            Boolean   @default(true)
+  failedPinAttempts Int       @default(0)
+  lockedUntil       DateTime? // blocage temporaire après trop d'erreurs de PIN
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  receptionsCreated    Reception[]     @relation("ReceptionCreatedBy")
+  receptionsControlled Reception[]     @relation("ReceptionController")
+  receptionsClosed     Reception[]     @relation("ReceptionClosedBy")
+  scans                Scan[]
+  photos               Photo[]
+  notes                ReceptionNote[]
+  disputesResolved     Dispute[]       @relation("DisputeResolvedBy")
+}
+
+// ---------- Réception (un camion) ----------
+
+model Reception {
+  id String @id @default(cuid())
+
+  // CMR-Ladeliste
+  loadingListNumber String? // n° de liste de chargement, ex. « 80977/652747 »
+  documentDate      DateTime? // date et heure imprimées sur la liste
+  relation          String    @default("X085")
+  agency            String    @default("Hauneck")
+
+  // Fahrauftrag
+  tripNumber      String? // n° Reise
+  tripDate        DateTime?
+  carrier         String    @default("Kuehne+Nagel")
+  subcontractor   String? // « Unternehmer » du Fahrauftrag (transporteur réel)
+  vehiclePlate    String?
+  trailerPlate    String?
+  unloadingPlaces String? // lieux de déchargement tels qu'imprimés
+  sealsExpected   String[] // plombs indiqués sur le Fahrauftrag
+  sealsFound      String[] // plombs constatés à l'ouverture
+
+  // Totaux attendus (ENDSUMMEN + W-WERT total)
+  expectedPackages   Int?
+  expectedWeightKg   Decimal? @db.Decimal(10, 2)
+  expectedValueCents Int?
+
+  // Contrôle
+  arrivedAt    DateTime? // arrivée réelle à quai
+  status       ReceptionStatus @default(BROUILLON)
+  createdById  String
+  createdBy    User            @relation("ReceptionCreatedBy", fields: [createdById], references: [id])
+  controllerId String?
+  controller   User?           @relation("ReceptionController", fields: [controllerId], references: [id])
+  closedAt     DateTime?
+  closedById   String?
+  closedBy     User?           @relation("ReceptionClosedBy", fields: [closedById], references: [id])
+  comment      String? // remarque générale
+
+  // Lecture automatique des documents (photo de la CMR / du Fahrauftrag)
+  importSource   String? // "PHOTO" ou "MANUEL"
+  importRaw      Json? // données brutes lues sur les photos (traçabilité)
+  importChecks   Json? // contrôles de la lecture (codes traduits à l'affichage, voir src/lib/cmr/checks.ts)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  positions        Position[]
+  scans            Scan[]
+  photos           Photo[]
+  notes            ReceptionNote[]
+  disputesOpened   Dispute[]       @relation("DisputeOrigin")
+  disputesResolved Dispute[]       @relation("DisputeFound")
+
+  @@index([status])
+  @@index([arrivedAt])
+  @@index([loadingListNumber])
+}
+
+// ---------- Position de la liste de chargement ----------
+
+model Position {
+  id          String    @id @default(cuid())
+  receptionId String
+  reception   Reception @relation(fields: [receptionId], references: [id], onDelete: Cascade)
+  lineNumber  Int // ordre sur la liste
+
+  shipmentNumber String // n° d'envoi tel qu'imprimé, ex. « 362/000/4659205 »
+  shipmentKey    String // n° d'envoi normalisé (chiffres seuls) pour la recherche
+  printedNumber  String? // Zeichen + Nr normalisé, ex. « 00340312892450832 » (pas unique : cas des doublons)
+
+  description    String? // désignation, ex. GIFT_WRAP ITEM
+  shipper        String? // ABS, ex. Amazon EU SARL
+  shipperZip     String?
+  shipperCity    String?
+  consigneeName  String? // EMP
+  deliveryStreet String?
+  deliveryZip    String?
+  deliveryCity   String?
+  isOffAddress   Boolean @default(false) // livraison prévue ailleurs qu'à Douvrin
+
+  packagesExpected Int // nb colis indiqués (ex. 15 pour « 15 SPEZ. PA »)
+  packagingType    String? // ex. « SPEZ. PA »
+  packagesReceived Int      @default(0)
+  weightKg         Decimal  @db.Decimal(10, 2) // B-GEW
+  valueCents       Int? // W-WERT
+  borderoNumbers   String[] // un envoi groupé peut porter plusieurs n° Bordero
+  isGrouped        Boolean  @default(false) // plusieurs palettes sans détail du contenu
+
+  status  PositionStatus @default(ATTENDU)
+  comment String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  scans            Scan[]
+  photos           Photo[]
+  notes            ReceptionNote[]
+  disputesOpened   Dispute[]       @relation("DisputeOriginPosition")
+  disputesResolved Dispute[]       @relation("DisputeFoundPosition")
+
+  @@index([receptionId, lineNumber])
+  @@index([shipmentKey])
+  @@index([printedNumber])
+}
+
+// ---------- Scan d'un colis / d'une palette ----------
+
+model Scan {
+  id          String    @id @default(cuid())
+  clientId    String    @unique // identifiant créé sur le téléphone : une resynchronisation ne crée pas de doublon
+  receptionId String
+  reception   Reception @relation(fields: [receptionId], references: [id], onDelete: Cascade)
+  positionId  String?
+  position    Position? @relation(fields: [positionId], references: [id], onDelete: SetNull)
+
+  rawCode        String // code tel que lu par la douchette / la caméra
+  normalizedCode String
+  match          ScanMatch
+  quantity       Int       @default(1) // > 1 pour compter les palettes d'un envoi groupé en une fois
+  isDuplicate    Boolean   @default(false) // même étiquette déjà scannée (ex. deux téléphones hors ligne) : non comptée
+
+  condition  PackageCondition @default(OK)
+  damageType DamageType?
+  comment    String?
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  scannedAt DateTime // heure sur le téléphone (peut précéder la synchro)
+  syncedAt  DateTime @default(now()) // heure de réception par le serveur
+
+  photos Photo[]
+
+  @@index([receptionId, scannedAt])
+  @@index([normalizedCode])
+}
+
+// ---------- Photos (fichiers dans le stockage, seule la clé est en base) ----------
+
+model Photo {
+  id          String    @id @default(cuid())
+  receptionId String
+  reception   Reception @relation(fields: [receptionId], references: [id], onDelete: Cascade)
+  positionId  String?
+  position    Position? @relation(fields: [positionId], references: [id], onDelete: SetNull)
+  scanId      String?
+  scan        Scan?     @relation(fields: [scanId], references: [id], onDelete: SetNull)
+  disputeId   String?
+  dispute     Dispute?  @relation(fields: [disputeId], references: [id], onDelete: SetNull)
+
+  kind       PhotoKind
+  storageKey String // chemin dans le stockage de fichiers (bucket)
+  mimeType   String
+  sizeBytes  Int
+  takenAt    DateTime
+  userId     String
+  user       User      @relation(fields: [userId], references: [id])
+  createdAt  DateTime  @default(now())
+
+  @@index([receptionId])
+}
+
+// ---------- Notes (dont notes manuscrites qui contredisent la liste) ----------
+
+model ReceptionNote {
+  id                      String    @id @default(cuid())
+  receptionId             String
+  reception               Reception @relation(fields: [receptionId], references: [id], onDelete: Cascade)
+  positionId              String?
+  position                Position? @relation(fields: [positionId], references: [id], onDelete: SetNull)
+  kind                    NoteKind
+  text                    String // texte recopié, ex. « 25 Missing Box »
+  declaredMissingPackages Int? // nombre de colis manquants annoncé par la note
+  authorId                String
+  author                  User      @relation(fields: [authorId], references: [id])
+  createdAt               DateTime  @default(now())
+
+  @@index([receptionId])
+}
+
+// ---------- Litige (manquant ouvert, suivi d'un camion à l'autre) ----------
+
+model Dispute {
+  id   String      @id @default(cuid())
+  type DisputeType @default(MANQUANT)
+
+  originReceptionId String
+  originReception   Reception @relation("DisputeOrigin", fields: [originReceptionId], references: [id], onDelete: Cascade)
+  originPositionId  String?
+  originPosition    Position? @relation("DisputeOriginPosition", fields: [originPositionId], references: [id], onDelete: SetNull)
+  oldShipmentNumber String // n° d'envoi d'origine
+  printedNumber     String? // n° imprimé : clé de rapprochement avec un camion suivant
+  packagesMissing   Int
+  weightKg          Decimal   @db.Decimal(10, 2)
+  valueCents        Int?
+
+  status            DisputeStatus @default(OUVERT)
+  foundReceptionId  String?
+  foundReception    Reception?    @relation("DisputeFound", fields: [foundReceptionId], references: [id], onDelete: SetNull)
+  foundPositionId   String?
+  foundPosition     Position?     @relation("DisputeFoundPosition", fields: [foundPositionId], references: [id], onDelete: SetNull)
+  newShipmentNumber String? // nouveau n° d'envoi attribué par K+N
+  foundAt           DateTime?
+  resolvedById      String?
+  resolvedBy        User?         @relation("DisputeResolvedBy", fields: [resolvedById], references: [id])
+  comment           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  photos Photo[]
+
+  @@index([status])
+  @@index([printedNumber])
+}
