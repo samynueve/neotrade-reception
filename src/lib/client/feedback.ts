@@ -5,9 +5,20 @@ import { getPrefs } from "./prefs";
 /** Retour immédiat au scan : bip et vibration (utile avec des gants et du bruit à quai), réglables dans Réglages. */
 let ctx: AudioContext | null = null;
 
+/** iPhone : le son reste bloqué tant que l'audio n'a pas été démarré pendant un toucher de l'écran. */
+export function unlockSound() {
+  try {
+    ctx ??= new AudioContext();
+    if (ctx.state === "suspended") void ctx.resume();
+  } catch {
+    // son indisponible
+  }
+}
+
 function tone(freq: number, ms: number, delay = 0) {
   try {
     ctx ??= new AudioContext();
+    if (ctx.state === "suspended") void ctx.resume();
     const o = ctx.createOscillator();
     const g = ctx.createGain();
     o.type = "square";

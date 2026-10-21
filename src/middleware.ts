@@ -17,5 +17,5 @@ export function middleware(request: NextRequest) {
 
 // Tout est protégé sauf la connexion, l'API d'auth, la page hors ligne et les fichiers de la PWA
 export const config = {
-  matcher: ["/((?!connexion|premier-demarrage|hors-ligne|api/auth|_next/|icons/|manifest.webmanifest|sw.js|favicon.ico).*)"],
+  matcher: ["/((?!connexion|premier-demarrage|hors-ligne|api/auth|_next/|icons/|wasm/|manifest.webmanifest|sw.js|favicon.ico).*)"],
 };

@@ -1,11 +1,11 @@
 /*
  * Service worker — Réception NEOTRADE
- * - Fichiers statiques Next (/_next/static, icônes) : cache d'abord (noms versionnés).
+ * - Fichiers statiques Next (/_next/static, icônes, moteur de scan /wasm) : cache d'abord.
  * - Pages : réseau d'abord ; sans réseau, dernière version en cache, sinon /hors-ligne.
  * - Les requêtes POST (actions, synchro des scans) ne passent jamais par le cache.
  * Les scans hors ligne sont stockés dans IndexedDB par l'application (étape scan), pas ici.
  */
-const VERSION = "v3";
+const VERSION = "v4";
 const STATIC_CACHE = `static-${VERSION}`;
 const PAGES_CACHE = `pages-${VERSION}`;
 const OFFLINE_URL = "/hors-ligne";
@@ -34,7 +34,7 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
 
-  if (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/")) {
+  if (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/") || url.pathname.startsWith("/wasm/")) {
     event.respondWith(
       caches.match(request).then(
         (hit) =>

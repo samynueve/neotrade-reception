@@ -21,3 +21,6 @@ playwright/.cache/
 
 .DS_Store
 uploads/
+
+# Moteur de lecture des codes-barres, copié depuis node_modules à l installation
+public/wasm/

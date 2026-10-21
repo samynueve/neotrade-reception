@@ -64,3 +64,15 @@
 @utility card {
   @apply rounded-2xl border-2 border-brand-indigo/25 bg-white shadow-sm;
 }
+
+/* Laser du scanner caméra (va-et-vient dans le viseur) */
+@keyframes scan-laser {
+  from { top: 12%; }
+  to { top: 85%; }
+}
+.scan-laser {
+  animation: scan-laser 1.2s ease-in-out infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scan-laser { animation: none; top: 50%; }
+}
