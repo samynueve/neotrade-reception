@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { afterFailure, isLocked } from "@/lib/pin-lock";
+import { lockEnd, MAX_PIN_ATTEMPTS } from "@/lib/pin-lock";
 import { prisma } from "@/lib/prisma";
 import { loginSchema } from "@/lib/validation/auth";
 
@@ -30,11 +30,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       authorize: async (raw) => {
         const parsed = loginSchema.safeParse(raw);
         if (!parsed.success) return null;
-        const user = await prisma.user.findUnique({ where: { id: parsed.data.userId } });
-        const ok = await bcrypt.compare(parsed.data.pin, user?.pinHash ?? DUMMY_HASH);
-        if (!user || !user.active || isLocked(user.lockedUntil)) return null;
+        const { userId, pin } = parsed.data;
+        const now = new Date();
+        // L'essai est compté AVANT la comparaison, en une seule requête : des connexions envoyées en rafale
+        // ne peuvent pas tester plus de MAX_PIN_ATTEMPTS codes (PostgreSQL relit la condition ligne verrouillée)
+        const reserved = await prisma.user.updateMany({
+          where: { id: userId, active: true, failedPinAttempts: { lt: MAX_PIN_ATTEMPTS }, OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }] },
+          data: { failedPinAttempts: { increment: 1 } },
+        });
+        const user = reserved.count ? await prisma.user.findUnique({ where: { id: userId } }) : null;
+        const ok = await bcrypt.compare(pin, user?.pinHash ?? DUMMY_HASH);
+        if (!user) return null;
         if (!ok) {
-          await prisma.user.update({ where: { id: user.id }, data: afterFailure(user.failedPinAttempts) });
+          // Dernier essai autorisé raté : blocage, et le compteur repart à zéro pour l'après-blocage
+          await prisma.user.updateMany({
+            where: { id: user.id, failedPinAttempts: { gte: MAX_PIN_ATTEMPTS } },
+            data: { failedPinAttempts: 0, lockedUntil: lockEnd(now) },
+          });
           return null;
         }
         await prisma.user.update({

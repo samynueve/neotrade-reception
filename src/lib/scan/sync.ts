@@ -37,6 +37,9 @@ export async function scanState(receptionId: string): Promise<SyncResponse> {
 export async function applyOps(receptionId: string, userId: string, ops: ScanOp[]): Promise<void> {
   await prisma.$transaction(
     async (tx) => {
+      // Une synchro à la fois par camion (verrou libéré à la fin de la transaction) : deux téléphones
+      // qui envoient la même étiquette au même instant ne la comptent pas deux fois
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`reception:${receptionId}`}))`;
       const reception = await tx.reception.findUnique({ where: { id: receptionId }, select: { status: true } });
       if (!reception) throw new SyncError("not_found", 404);
       if (reception.status === "CLOTUREE") throw new SyncError("closed", 409);

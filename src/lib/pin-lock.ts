@@ -6,9 +6,7 @@ export function isLocked(lockedUntil: Date | null | undefined, now = new Date())
   return !!lockedUntil && lockedUntil > now;
 }
 
-/** Nouvel état après une erreur de PIN. */
-export function afterFailure(failedPinAttempts: number, now = new Date()): { failedPinAttempts: number; lockedUntil: Date | null } {
-  const attempts = failedPinAttempts + 1;
-  if (attempts >= MAX_PIN_ATTEMPTS) return { failedPinAttempts: 0, lockedUntil: new Date(now.getTime() + LOCK_MINUTES * 60_000) };
-  return { failedPinAttempts: attempts, lockedUntil: null };
+/** Fin du blocage posé à la dernière erreur autorisée. */
+export function lockEnd(now = new Date()): Date {
+  return new Date(now.getTime() + LOCK_MINUTES * 60_000);
 }
