@@ -1,9 +1,8 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
-import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { Locale } from "@/i18n/config";
 import { KN_80977_652747 } from "./fixture";
-import { extractionSchema, type Extraction } from "./schema";
+import { extractionJsonSchema, parseExtraction, type Extraction } from "./schema";
 
 /** Erreur de lecture ; le code est traduit à l'affichage (dictionnaire, rubrique errors). */
 export type ExtractionErrorCode = "not_configured" | "bad_key" | "rate_limited" | "rejected" | "no_connection" | "unavailable" | "refused" | "too_long" | "incomplete";
@@ -29,7 +28,10 @@ Recopie exactement ce qui est imprimé. Les nombres sont au format allemand : «
 Ne devine jamais une valeur : si elle est illisible ou absente, mets null et explique-le dans doubts.
 Un tampon « ORIGINAL » ou des barres verticales tracées au stylo à côté des numéros ne font pas partie des valeurs.
 Les mentions écrites à la main (ex. « 25 Missing Box ») vont dans handwrittenNotes, pas dans les positions.
-Si les photos semblent incomplètes (ENDSUMMEN absent, numéros de position qui sautent), signale-le dans doubts.`;
+Si les photos semblent incomplètes (ENDSUMMEN absent, numéros de position qui sautent), signale-le dans doubts.
+
+Réponds uniquement par un objet JSON conforme à ce schéma JSON, sans texte avant ni après :
+${extractionJsonSchema}`;
 
 let client: Anthropic | null = null;
 
@@ -56,13 +58,13 @@ export async function extractDocuments(images: DocumentImage[], locale: Locale =
 
   let response;
   try {
-    response = await client.beta.messages.parse({
+    response = await client.beta.messages.create({
       model: MODEL,
       max_tokens: 16000,
       // Si le modèle refuse pour une raison de sécurité, l'API rejoue la demande sur un modèle de secours
       betas: ["server-side-fallback-2026-07-01"],
       fallbacks: "default",
-      output_config: { effort: "medium", format: betaZodOutputFormat(extractionSchema) },
+      output_config: { effort: "medium" },
       system: SYSTEM,
       messages: [{ role: "user", content }],
     });
@@ -79,6 +81,11 @@ export async function extractDocuments(images: DocumentImage[], locale: Locale =
 
   if (response.stop_reason === "refusal") throw new ExtractionError("refused");
   if (response.stop_reason === "max_tokens") throw new ExtractionError("too_long");
-  if (!response.parsed_output) throw new ExtractionError("incomplete");
-  return response.parsed_output;
+  const text = response.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("");
+  const extraction = parseExtraction(text);
+  if (!extraction) {
+    console.error("Lecture CMR — réponse non conforme au schéma", text.slice(0, 500));
+    throw new ExtractionError("incomplete");
+  }
+  return extraction;
 }

@@ -73,3 +73,25 @@ export const extractionSchema = z.object({
 
 export type Extraction = z.infer<typeof extractionSchema>;
 export type LadelistePosition = z.infer<typeof ladelistePositionSchema>;
+
+/**
+ * Schéma JSON donné à Claude dans la consigne. Il n'est pas imposé par l'API (sortie structurée) :
+ * avec autant de champs facultatifs, l'API refuse (« compiled grammar is too large »). La réponse est validée ici.
+ */
+export const extractionJsonSchema = JSON.stringify(z.toJSONSchema(extractionSchema));
+
+/** Réponse texte de Claude → données validées, ou null si elle ne respecte pas le schéma. */
+export function parseExtraction(text: string): Extraction | null {
+  // Tolère un bloc ```json … ``` ou une phrase autour de l'objet
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+  const parsed = extractionSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
