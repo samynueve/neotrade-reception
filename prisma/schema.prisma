@@ -1,6 +1,7 @@
 // Schéma de données — Réception à quai NEOTRADE / SAS KASMI (Douvrin)
 // Contrôle des camions Kuehne+Nagel (agence Hauneck, relation X085).
-// Base PostgreSQL (dev et prod). DIRECT_URL sert aux migrations (Supabase : connexion directe, port 5432).
+// Base PostgreSQL (dev et prod). Noms de variables de l'intégration Supabase de Vercel (remplies automatiquement) :
+// POSTGRES_PRISMA_URL (pooler, requêtes) et POSTGRES_URL_NON_POOLING (connexion directe, migrations).
 //
 // Conventions (comme le site B2B) : modèles et champs en anglais, valeurs d'énumérations en français,
 // montants en centimes d'euro (entiers), poids en kg (décimal, 2 chiffres).
@@ -11,8 +12,8 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
 }
 
 // ---------- Énumérations ----------

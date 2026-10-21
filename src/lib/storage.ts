@@ -19,15 +19,33 @@ function check(key: string) {
   if (!SAFE_KEY.test(key) || key.includes("..")) throw new Error(`Clé de fichier invalide : ${key}`);
 }
 
+/** Crée le bucket privé s'il manque (évite une étape manuelle dans Supabase). */
+async function createBucket(): Promise<boolean> {
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/bucket`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ id: BUCKET, name: BUCKET, public: false }),
+  });
+  return res.ok || res.status === 409 || /already exists/i.test(await res.text());
+}
+
 export async function putFile(key: string, data: Buffer, contentType: string): Promise<void> {
   check(key);
   if (SUPABASE_URL && SUPABASE_KEY) {
-    const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${key}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": contentType, "x-upsert": "true" },
-      body: new Uint8Array(data),
-    });
-    if (!res.ok) throw new Error(`Envoi du fichier impossible (${res.status}) : ${await res.text()}`);
+    const upload = () =>
+      fetch(`${SUPABASE_URL}/storage/v1/object/${BUCKET}/${key}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": contentType, "x-upsert": "true" },
+        body: new Uint8Array(data),
+      });
+    let res = await upload();
+    if (!res.ok) {
+      const text = await res.text();
+      // Premier envoi : le bucket n'existe pas encore → création (privé), puis nouvel essai
+      if (/bucket not found/i.test(text) && (await createBucket())) res = await upload();
+      else throw new Error(`Envoi du fichier impossible (${res.status}) : ${text}`);
+      if (!res.ok) throw new Error(`Envoi du fichier impossible (${res.status}) : ${await res.text()}`);
+    }
     return;
   }
   const file = path.join(LOCAL_DIR, key);

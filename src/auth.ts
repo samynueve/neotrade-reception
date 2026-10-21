@@ -15,6 +15,8 @@ const DUMMY_HASH = bcrypt.hashSync("0000", 10);
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
+  // AUTH_SECRET si défini ; sinon le secret JWT fourni par l'intégration Supabase de Vercel
+  secret: process.env.AUTH_SECRET || process.env.SUPABASE_JWT_SECRET,
   session: { strategy: "jwt", maxAge: 12 * 3600 },
   pages: { signIn: "/connexion" },
   providers: [
