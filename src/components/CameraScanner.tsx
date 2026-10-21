@@ -69,6 +69,10 @@ export function CameraScanner({ onCode, paused }: Props) {
     let stream: MediaStream | null = null;
     const last = { code: "", at: 0 };
     const canvas = document.createElement("canvas");
+    const resume = () => {
+      const video = videoRef.current;
+      if (!stopped && video && video.paused && document.visibilityState === "visible") video.play().catch(() => {});
+    };
 
     // iPhone : le son n'est permis qu'après un premier toucher de l'écran
     document.addEventListener("pointerdown", unlockSound, { once: true });
@@ -84,6 +88,9 @@ export function CameraScanner({ onCode, paused }: Props) {
         if (stopped) return stream.getTracks().forEach((tr) => tr.stop());
         video.srcObject = stream;
         await video.play();
+        // iPhone : l'image se fige quand Safari met la vidéo en pause (sortie du plein écran, retour dans l'app)
+        video.addEventListener("pause", resume);
+        document.addEventListener("visibilitychange", resume);
 
         const track = stream.getVideoTracks()[0];
         const caps = (track.getCapabilities?.() ?? {}) as { torch?: boolean; zoom?: { min: number; max: number }; focusMode?: string[] };
@@ -129,6 +136,8 @@ export function CameraScanner({ onCode, paused }: Props) {
       clearTimeout(timer);
       clearTimeout(hitTimer);
       document.removeEventListener("pointerdown", unlockSound);
+      document.removeEventListener("visibilitychange", resume);
+      videoRef.current?.removeEventListener("pause", resume);
       stream?.getTracks().forEach((tr) => tr.stop());
     };
   }, []);
@@ -149,7 +158,8 @@ export function CameraScanner({ onCode, paused }: Props) {
 
   return (
     <div className="relative overflow-hidden rounded-2xl bg-brand-ink">
-      <video ref={videoRef} playsInline muted className="aspect-[4/3] w-full object-cover" />
+      {/* pointer-events-none : sur iPhone, toucher la vidéo l'ouvrait en plein écran dans le lecteur de Safari */}
+      <video ref={videoRef} playsInline muted autoPlay disablePictureInPicture controls={false} className="pointer-events-none aspect-[4/3] w-full select-none object-cover" />
       {/* Viseur : assombrit le reste de l'image, laser rouge tant qu'aucun code n'est lu, cadre vert au moment de la lecture */}
       <div
         aria-hidden
