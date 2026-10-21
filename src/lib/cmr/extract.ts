@@ -61,6 +61,8 @@ export async function extractDocuments(images: DocumentImage[], locale: Locale =
       messages: [{ role: "user", content }],
     });
   } catch (error) {
+    // Raison exacte dans les logs Vercel (crédit épuisé, image refusée…) : l'écran n'affiche qu'un code
+    if (error instanceof Anthropic.APIError) console.error("Lecture CMR — API Anthropic", error.status, error.message);
     if (error instanceof Anthropic.AuthenticationError) throw new ExtractionError("bad_key");
     if (error instanceof Anthropic.RateLimitError) throw new ExtractionError("rate_limited");
     if (error instanceof Anthropic.BadRequestError) throw new ExtractionError("rejected");
