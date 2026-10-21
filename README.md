@@ -16,9 +16,9 @@ installable (PWA : `src/app/manifest.ts` + `public/sw.js`).
 Prérequis : Node.js 20+, PostgreSQL 14+ (local, Docker ou Supabase).
 
 ```bash
-cd reception
+cd neotrade-reception
 npm install
-cp .env.example .env          # compléter DATABASE_URL, DIRECT_URL, AUTH_SECRET, SEED_MANAGER_PIN
+cp .env.example .env          # compléter POSTGRES_PRISMA_URL, POSTGRES_URL_NON_POOLING, AUTH_SECRET, SEED_MANAGER_PIN
 npm run db:deploy             # crée les tables
 npm run db:seed               # premier responsable + cariste démo + 2 réceptions d'exemple
 npm run dev                   # http://localhost:3001
@@ -111,12 +111,14 @@ Montants en centimes d'euro, poids en kg décimaux, heures affichées en heure d
 
 ## Mise en ligne (Supabase + Vercel), possible entièrement depuis un téléphone
 
-1. **Supabase** : nouveau projet (région Europe). *Connect → ORMs → Prisma* donne `DATABASE_URL` et `DIRECT_URL`.
-   *Storage → New bucket* `reception`, **privé**. *Project Settings → API* : Project URL (`SUPABASE_URL`) et clé `service_role` (`SUPABASE_SERVICE_ROLE_KEY`).
-2. **Anthropic** : clé API (`ANTHROPIC_API_KEY`) sur console.anthropic.com, avec un peu de crédit.
-3. **Vercel** : importer le dépôt, *Root Directory* = `reception`, renseigner les variables de `.env.example`
-   (dont `AUTH_SECRET` et `SETUP_CODE`). `vercel.json` fixe la commande de build (`prisma migrate deploy && next build`,
-   les tables sont créées au déploiement) et la région Paris.
+1. **Vercel** : importer le dépôt GitHub (Root Directory vide). `vercel.json` fixe la commande de build
+   (`prisma migrate deploy && next build`, les tables sont créées au déploiement) et la région Paris.
+2. **Supabase** : Vercel → *Integrations → Supabase → Link Existing Supabase Account*, relier le projet Supabase
+   au projet Vercel. L'intégration remplit seule `POSTGRES_PRISMA_URL`, `POSTGRES_URL_NON_POOLING`, `POSTGRES_PASSWORD`,
+   `SUPABASE_URL`, `SUPABASE_SECRET_KEY`. Le bucket privé `reception` est créé au premier envoi de photo.
+   `AUTH_SECRET` est facultatif (dérivé de `POSTGRES_PASSWORD` à défaut).
+3. **À saisir à la main dans Vercel** : `SETUP_CODE` (obligatoire pour le premier démarrage) et, pour la lecture des CMR,
+   `ANTHROPIC_API_KEY` (console.anthropic.com). Redéployer après tout ajout de variable.
 4. **Premier démarrage** : ouvrir l'adresse Vercel, « Premier démarrage », saisir `SETUP_CODE`, créer le premier responsable.
    Il ajoute ensuite les caristes dans *Gérer les utilisateurs* (ajout, nouveau PIN, déblocage, désactivation).
 5. **iPhone** : ouvrir l'adresse dans **Safari** → Partager → *Sur l'écran d'accueil*. **Android** : Chrome → ⋮ → *Installer l'application*.
