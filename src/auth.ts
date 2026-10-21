@@ -3,6 +3,7 @@
  * Session JWT de 12 h (une journée de travail). Le jeton ne contient que l'identifiant et le rôle ;
  * l'utilisateur est relu en base à chaque requête (lib/session.ts) pour qu'une désactivation prenne effet aussitôt.
  */
+import { createHash } from "node:crypto";
 import bcrypt from "bcryptjs";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
@@ -15,8 +16,12 @@ const DUMMY_HASH = bcrypt.hashSync("0000", 10);
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
-  // AUTH_SECRET si défini ; sinon le secret JWT fourni par l'intégration Supabase de Vercel
-  secret: process.env.AUTH_SECRET || process.env.SUPABASE_JWT_SECRET,
+  // AUTH_SECRET si défini ; sinon dérivé du mot de passe de la base fourni par l'intégration Supabase (jamais exposé)
+  secret:
+    process.env.AUTH_SECRET ||
+    (process.env.POSTGRES_PASSWORD &&
+      createHash("sha256").update(`neotrade-reception:auth:${process.env.POSTGRES_PASSWORD}`).digest("base64")) ||
+    undefined,
   session: { strategy: "jwt", maxAge: 12 * 3600 },
   pages: { signIn: "/connexion" },
   providers: [
