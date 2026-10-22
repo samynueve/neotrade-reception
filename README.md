@@ -3,7 +3,8 @@
 Application mobile pour contrôler à quai chaque camion Kuehne+Nagel (agence Hauneck, relation X085)
 reçu par NEOTRADE / SAS KASMI, 2 rue de Pâques, 62138 Douvrin.
 
-> 🚧 Construite par étapes. **Étape actuelle : 3 — Scan des colis** (caméra, douchette, hors ligne).
+> 🚧 Construite par étapes. **En production** (neotrade-reception.vercel.app) : lecture des CMR et scan des colis.
+> Prochaines étapes : import du fichier Kuehne+Nagel, puis clôture et litiges (voir *Avancement*).
 
 ## Stack
 
@@ -34,10 +35,12 @@ Le service worker n'est actif qu'en production : pour tester le hors-ligne, `npm
 ## Nouveau camion : lecture automatique de la CMR
 
 1. Le cariste photographie la CMR-Ladeliste (toutes les pages) et, si possible, le Fahrauftrag (plombs).
-   Les photos sont réduites sur le téléphone (2200 px, JPEG) avant envoi.
-2. `POST /api/cmr/lire` conserve les photos puis les fait lire par Claude (`src/lib/cmr/extract.ts`,
-   modèle `claude-opus-5-5`, sortie structurée validée par le schéma `src/lib/cmr/schema.ts`).
+   Les photos sont réduites sur le téléphone (2200 px, JPEG) avant envoi. 8 photos au plus par lecture.
+2. `POST /api/cmr/lire` conserve les photos puis les fait lire par Claude (`src/lib/cmr/extract.ts`, modèle `claude-opus-5-5`).
+   Le schéma JSON attendu (`src/lib/cmr/schema.ts`) est donné dans la consigne et la réponse est validée par Zod
+   (`parseExtraction`) : la sortie structurée imposée par l'API est refusée pour ce schéma (« compiled grammar is too large »).
    Si le modèle refuse pour une raison de sécurité, l'API rejoue la demande sur son modèle de secours (option `fallbacks: "default"`).
+   Toute erreur de l'API Anthropic est écrite dans les logs Vercel (« Lecture CMR — API Anthropic ») ; l'écran n'affiche qu'un code.
 3. `src/lib/cmr/analyze.ts` construit la réception et les contrôles : somme des positions = ENDSUMMEN et W-WERT,
    recoupement avec le Fahrauftrag (envois, colis, poids, immatriculations, n° Reise), positions hors adresse,
    envois groupés, n° imprimés en double, notes manuscrites. `src/lib/cmr/context.ts` ajoute les contrôles en base :
@@ -46,11 +49,22 @@ Le service worker n'est actif qu'en production : pour tester le hors-ligne, `npm
 
 Sans clé `ANTHROPIC_API_KEY`, la saisie manuelle reste disponible. `CMR_EXTRACTION_MOCK=true` permet de tester
 sans clé : toute photo est lue comme l'exemple réel 80977/652747 (`src/lib/cmr/fixture.ts`).
-Coût indicatif : quelques centimes par camion.
+Coût mesuré (octobre 2026) : environ 0,07 $ par page, soit ~1,40 $ par camion de 20 pages et ~336 $ par an
+(1 camion par jour, 20 jours par mois). Pistes pour réduire : effort `low`, cache de la consigne, ou recevoir de
+Kuehne+Nagel la liste de chargement en fichier (Excel/CSV, demande envoyée) : plus de lecture par Claude, donc gratuit.
 
 ## Scan des colis au déchargement
 
-Écran `/receptions/[id]/scan` : caméra (lecteur natif Android, sinon ZXing pour iPhone), douchette (clavier HID, validée par Entrée) ou saisie.
+Écran `/receptions/[id]/scan` : caméra, douchette (clavier HID, validée par Entrée, ex. douchette Bluetooth) ou saisie.
+
+- **Caméra** (`src/components/CameraScanner.tsx`) : lecteur natif Android ; sur iPhone, ZXing-C++ en WebAssembly
+  (paquet `barcode-detector`). Le fichier `.wasm` est copié dans `public/wasm` à l'installation (`scripts/copy-wasm.mjs`)
+  et mis en cache par le service worker : la lecture marche hors ligne. Seule la zone du viseur est analysée ; mise au point
+  continue et zoom ×2 si le téléphone le permet (scanner à 25-30 cm). Laser rouge, cadre vert « ✓ » et bip à chaque lecture
+  (le son est débloqué au premier toucher : Safari le bloque avant). L'aperçu est un canvas posé sur la vidéo, pour que
+  Safari ne l'ouvre pas en plein écran au toucher.
+- **iPhone : ouvrir l'app depuis son icône** (Safari → Partager → *Sur l'écran d'accueil*), jamais depuis un lien
+  WhatsApp / e-mail : leurs navigateurs intégrés lancent toute vidéo, donc la caméra, en plein écran.
 
 - **Rapprochement** (`src/lib/scan/match.ts`, testé sur une vraie étiquette Amazon) : l'étiquette porte
   `00340312892450832619` (AI 00 + SSCC), la CMR n'en imprime que le début `00340312892450832` → comparaison par préfixe.
@@ -59,7 +73,9 @@ Coût indicatif : quelques centimes par camion.
   « +1 » compte à la main (étiquette illisible, palettes d'un envoi groupé). Avarie : type, commentaire, photo. Annulation du dernier scan.
 - **Hors ligne** : chaque scan est écrit dans IndexedDB (`src/lib/client/outbox.ts`) avant tout envoi, puis synchronisé
   (`POST /api/receptions/[id]/scans`) dès que le réseau revient. Le serveur refait le rapprochement, recalcule les compteurs
-  et les statuts ; un même scan renvoyé deux fois ne compte qu'une fois. Plusieurs téléphones peuvent scanner le même camion.
+  et les statuts ; un même scan renvoyé deux fois ne compte qu'une fois. Plusieurs téléphones peuvent scanner le même camion :
+  les synchros d'un même camion passent l'une après l'autre (verrou PostgreSQL `pg_advisory_xact_lock`), une étiquette
+  envoyée au même instant par deux téléphones n'est comptée qu'une fois.
 
 ## Langues
 
@@ -118,7 +134,9 @@ Montants en centimes d'euro, poids en kg décimaux, heures affichées en heure d
    `SUPABASE_URL`, `SUPABASE_SECRET_KEY`. Le bucket privé `reception` est créé au premier envoi de photo.
    `AUTH_SECRET` est facultatif (dérivé de `POSTGRES_PASSWORD` à défaut).
 3. **À saisir à la main dans Vercel** : `SETUP_CODE` (obligatoire pour le premier démarrage) et, pour la lecture des CMR,
-   `ANTHROPIC_API_KEY` (console.anthropic.com). Redéployer après tout ajout de variable.
+   `ANTHROPIC_API_KEY` (platform.claude.com → Clés API ; prévoir du crédit dans Facturation). Si la clé n'est rattachée à
+   aucun espace de travail (préfixe `sk-ant-usr-`), ajouter aussi `ANTHROPIC_WORKSPACE_ID` (`wrkspc_…`, page Espaces de
+   travail) : sinon l'API refuse la lecture. En production, les deux sont en place. Redéployer après tout ajout de variable.
 4. **Premier démarrage** : ouvrir l'adresse Vercel, « Premier démarrage », saisir `SETUP_CODE`, créer le premier responsable.
    Il ajoute ensuite les caristes dans *Gérer les utilisateurs* (ajout, nouveau PIN, déblocage, désactivation).
 5. **iPhone** : ouvrir l'adresse dans **Safari** → Partager → *Sur l'écran d'accueil*. **Android** : Chrome → ⋮ → *Installer l'application*.
@@ -126,6 +144,17 @@ Montants en centimes d'euro, poids en kg décimaux, heures affichées en heure d
 HTTPS (fourni par Vercel) est obligatoire pour l'installation et la caméra. La lecture d'une CMR doit tenir en 60 s
 (maximum du forfait gratuit Vercel). Le forfait gratuit Vercel (Hobby) est réservé à un usage non commercial :
 pour un usage professionnel, prévoir le forfait Pro.
+
+Sécurité de la connexion : chaque essai de PIN est compté avant la comparaison, en une seule requête conditionnelle
+(`src/auth.ts`) ; des connexions envoyées en rafale ne peuvent pas tester plus de 5 codes avant le blocage de 15 minutes.
+
+## Travailler sur le projet
+
+Le code de référence est sur GitHub (`samynueve/neotrade-reception`). Tout envoi sur `main` est mis en ligne par Vercel.
+Développement avec Claude Code dans le cloud (claude.ai/code, environnement « Github », sans script de configuration :
+installer avec `npm ci` dans la session) : chaque session travaille sur sa branche et propose une pull request, mise en
+ligne au *Merge*. Les variables de Vercel ne valent que pour la Production : les aperçus des pull requests ne marchent pas
+sans les copier aussi en *Preview*.
 
 ## Avancement
 
@@ -135,5 +164,8 @@ pour un usage professionnel, prévoir le forfait Pro.
 - [ ] Photos du camion à l'arrivée
 - [x] **Étape 3 — Scan** : caméra / douchette / saisie, rapprochement avec la CMR, avaries, file hors ligne IndexedDB et synchronisation
 - [x] Comptes : premier démarrage depuis le téléphone, gestion des utilisateurs par le responsable
+- [x] Mise en production (octobre 2026) : lecture des CMR et scan iPhone validés sur le terrain
+- [ ] Tester deux téléphones qui scannent le même camion en même temps (un colis ne doit compter qu'une fois)
+- [ ] Import de la liste de chargement envoyée par Kuehne+Nagel en fichier (Excel/CSV ou PDF généré) : en attente d'un exemple de K+N
 - [ ] Étape 4 — Clôture, litiges et rapprochement entre camions
 - [ ] Étape 5 — Rapport de réception (PDF / impression)
