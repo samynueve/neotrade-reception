@@ -30,14 +30,38 @@ async function createDetector(): Promise<Detector> {
   return new BarcodeDetector({ formats: FORMATS as never });
 }
 
-/** Copie dans le canvas la partie de l'image vidéo visible dans le viseur (la vidéo est affichée en object-cover). */
-function drawAim(video: HTMLVideoElement, canvas: HTMLCanvasElement): boolean {
+/** Partie de l'image caméra visible dans l'aperçu (recadrée pour le remplir, comme object-cover). */
+function visibleArea(video: HTMLVideoElement, view: HTMLElement) {
   const vw = video.videoWidth;
   const vh = video.videoHeight;
-  if (!vw || !vh) return false;
-  const scale = Math.max(video.clientWidth / vw, video.clientHeight / vh);
-  const sw = (video.clientWidth / scale) * AIM_W;
-  const sh = (video.clientHeight / scale) * AIM_H;
+  if (!vw || !vh || !view.clientWidth) return null;
+  const scale = Math.max(view.clientWidth / vw, view.clientHeight / vh);
+  const w = view.clientWidth / scale;
+  const h = view.clientHeight / scale;
+  return { vw, vh, w, h };
+}
+
+/** Image caméra → aperçu. Un canvas et non la vidéo : sur iPhone, toucher une vidéo ouvre le lecteur plein écran de Safari. */
+function drawPreview(video: HTMLVideoElement, preview: HTMLCanvasElement) {
+  const area = visibleArea(video, preview);
+  if (!area) return;
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.round(preview.clientWidth * ratio);
+  const height = Math.round(preview.clientHeight * ratio);
+  if (preview.width !== width || preview.height !== height) {
+    preview.width = width;
+    preview.height = height;
+  }
+  preview.getContext("2d")!.drawImage(video, (area.vw - area.w) / 2, (area.vh - area.h) / 2, area.w, area.h, 0, 0, width, height);
+}
+
+/** Copie dans le canvas la partie de l'image caméra visible dans le viseur. */
+function drawAim(video: HTMLVideoElement, view: HTMLElement, canvas: HTMLCanvasElement): boolean {
+  const area = visibleArea(video, view);
+  if (!area) return false;
+  const { vw, vh } = area;
+  const sw = area.w * AIM_W;
+  const sh = area.h * AIM_H;
   canvas.width = Math.round(sw);
   canvas.height = Math.round(sh);
   canvas.getContext("2d", { willReadFrequently: true })!.drawImage(video, (vw - sw) / 2, (vh - sh) / 2, sw, sh, 0, 0, canvas.width, canvas.height);
@@ -52,6 +76,7 @@ function drawAim(video: HTMLVideoElement, canvas: HTMLCanvasElement): boolean {
 export function CameraScanner({ onCode, paused }: Props) {
   const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const previewRef = useRef<HTMLCanvasElement>(null);
   const [error, setError] = useState<"denied" | "notFound" | "unavailable" | null>(null);
   const [ready, setReady] = useState(false);
   const [hit, setHit] = useState<string | null>(null);
@@ -65,6 +90,7 @@ export function CameraScanner({ onCode, paused }: Props) {
   useEffect(() => {
     let stopped = false;
     let timer = 0;
+    let frame = 0;
     let hitTimer = 0;
     let stream: MediaStream | null = null;
     const last = { code: "", at: 0 };
@@ -102,10 +128,18 @@ export function CameraScanner({ onCode, paused }: Props) {
         if (caps.torch) setTorch(track);
         setReady(true);
 
+        const preview = previewRef.current!;
+        const paint = () => {
+          if (stopped) return;
+          drawPreview(video, preview);
+          frame = requestAnimationFrame(paint);
+        };
+        paint();
+
         const loop = async () => {
           if (stopped) return;
           let delay = 100;
-          if (!pausedRef.current && drawAim(video, canvas)) {
+          if (!pausedRef.current && drawAim(video, preview, canvas)) {
             try {
               const code = (await detector.detect(canvas))[0]?.rawValue;
               const now = Date.now();
@@ -134,6 +168,7 @@ export function CameraScanner({ onCode, paused }: Props) {
     return () => {
       stopped = true;
       clearTimeout(timer);
+      cancelAnimationFrame(frame);
       clearTimeout(hitTimer);
       document.removeEventListener("pointerdown", unlockSound);
       document.removeEventListener("visibilitychange", resume);
@@ -158,8 +193,10 @@ export function CameraScanner({ onCode, paused }: Props) {
 
   return (
     <div className="relative overflow-hidden rounded-2xl bg-brand-ink">
-      {/* pointer-events-none : sur iPhone, toucher la vidéo l'ouvrait en plein écran dans le lecteur de Safari */}
-      <video ref={videoRef} playsInline muted autoPlay disablePictureInPicture controls={false} className="pointer-events-none aspect-[4/3] w-full select-none object-cover" />
+      {/* La vidéo (source des images) est entièrement recouverte par l'aperçu en canvas : on ne peut plus la toucher,
+          donc Safari ne peut plus l'ouvrir en plein écran. Elle reste à sa taille pour que l'iPhone continue de la décoder. */}
+      <video ref={videoRef} playsInline muted autoPlay disablePictureInPicture controls={false} aria-hidden className="pointer-events-none absolute inset-0 h-full w-full object-cover" />
+      <canvas ref={previewRef} aria-hidden className="relative block aspect-[4/3] w-full touch-none select-none" />
       {/* Viseur : assombrit le reste de l'image, laser rouge tant qu'aucun code n'est lu, cadre vert au moment de la lecture */}
       <div
         aria-hidden
